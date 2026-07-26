@@ -39,15 +39,15 @@ Only the source is pushed — `.env` and `node_modules/` stay local.
 5. Wait for the first deploy to finish. You'll get a public URL like:
 
    ```
-   https://storefront-ai-agent.onrender.com
+   https://shopify-agent-t1.onrender.com
    ```
 
 6. Verify it's up — open in a browser (or curl):
 
    ```
-   https://storefront-ai-agent.onrender.com/health      → {"ok":true}
-   https://storefront-ai-agent.onrender.com/widget.js    → serves the widget script
-   https://storefront-ai-agent.onrender.com/preview      → live test page with the chat bubble
+   https://shopify-agent-t1.onrender.com/health      → {"ok":true}
+   https://shopify-agent-t1.onrender.com/widget.js    → serves the widget script
+   https://shopify-agent-t1.onrender.com/preview      → live test page with the chat bubble
    ```
 
    Open `/preview` and try a message like "what products do you have?" — if it replies, the backend is fully live.
@@ -65,7 +65,7 @@ Once you have your live Render URL, add this single line to your theme. In Shopi
 Paste this just before the closing `</body>` tag, replacing the URL with your actual Render URL:
 
 ```html
-<script src="https://storefront-ai-agent.onrender.com/widget.js" defer></script>
+<script src="https://shopify-agent-t1.onrender.com/widget.js" defer></script>
 ```
 
 Save. That's it — the chat bubble appears bottom-right on every storefront page. The widget auto-loads its own CSS and points its API calls back to whatever domain served `widget.js`, so there's nothing else to configure.
