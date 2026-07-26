@@ -205,14 +205,24 @@
       }
     }
 
-    // Extra nudge for themes that listen for their own cart events rather than
-    // (or in addition to) section rendering. Harmless if none match.
+    // Notify the theme so its header cart icon / drawer re-render without a
+    // reload. Shopify's Horizon theme (this store's JULY13) listens on document
+    // for `cart:update` and sets the badge from detail.data.itemCount — so we
+    // pass the real total from /cart.js. Older themes get the generic events.
     notifyThemeCartUpdated() {
+      const count = this.cart?.count ?? 0;
       try {
+        // Horizon / newer themes (ThemeEvents.cartUpdate === "cart:update").
+        // source !== "product-form-component" makes the icon SET (not add) count.
+        document.dispatchEvent(
+          new CustomEvent("cart:update", {
+            bubbles: true,
+            detail: { data: { itemCount: count, source: "storefront-ai-widget" } },
+          })
+        );
+        // Legacy / Dawn-style fallbacks — harmless if unhandled.
         document.dispatchEvent(new CustomEvent("cart:refresh", { bubbles: true }));
         document.dispatchEvent(new CustomEvent("cart:build"));
-        document.dispatchEvent(new CustomEvent("cart-update"));
-        document.dispatchEvent(new CustomEvent("cart:updated"));
         if (window.Shopify && typeof window.Shopify.onCartUpdate === "function") {
           fetch("/cart.js").then((r) => r.json()).then((c) => window.Shopify.onCartUpdate(c)).catch(() => {});
         }
