@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: storefront-ai-agent
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: SHOPIFY_STORE_DOMAIN
+        value: steadydecker.myshopify.com
+      - key: SHOPIFY_STOREFRONT_TOKEN
+        sync: false
