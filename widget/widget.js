@@ -117,7 +117,13 @@
           const res = await fetch("/cart/add.js", {
             method: "POST",
             headers: { "Content-Type": "application/json", Accept: "application/json" },
-            body: JSON.stringify({ items: [{ id: Number(a.variantId), quantity: a.quantity ?? 1 }] }),
+            body: JSON.stringify({
+              items: [{ id: Number(a.variantId), quantity: a.quantity ?? 1 }],
+              // Ask Shopify to re-render the theme's cart sections so the header
+              // cart icon/drawer update without a page reload (Dawn convention).
+              sections: "cart-icon-bubble,cart-drawer,cart-live-region-text,cart-notification-product,cart-count-bubble,main-cart-items,main-cart-footer",
+              sections_url: window.location.pathname,
+            }),
           });
           const ct = res.headers.get("content-type") || "";
           const body = ct.includes("json") ? await res.json().catch(() => null) : null;
@@ -135,6 +141,7 @@
             continue;
           }
           anyOk = true;
+          if (body && body.sections) this.renderThemeSections(body.sections);
         } catch (err) {
           console.warn("[sfai] cart/add.js error", err);
           this.messages.push({
@@ -174,12 +181,38 @@
       }
     }
 
-    // Nudge the theme to refresh its cart icon / drawer. Themes listen for
-    // different events, so we fire the common ones; harmless if none match.
+    // Inject Shopify's re-rendered cart sections into the live page so the
+    // theme's header cart icon / drawer reflect the new cart without a reload.
+    // Works for Dawn and Dawn-derived custom themes (like this store's JULY13).
+    renderThemeSections(sections) {
+      for (const [name, html] of Object.entries(sections)) {
+        if (!html) continue;
+        try {
+          const parsed = new DOMParser().parseFromString(html, "text/html");
+          // The section id in the live DOM usually matches the section name.
+          const source = parsed.getElementById(name) || parsed.body.firstElementChild;
+          const targets = [
+            document.getElementById(name),
+            document.getElementById(`shopify-section-${name}`),
+            ...document.querySelectorAll(`[id^="shopify-section-"] #${CSS.escape(name)}`),
+          ].filter(Boolean);
+          for (const t of targets) {
+            t.innerHTML = source ? source.innerHTML : html;
+          }
+        } catch (e) {
+          console.warn("[sfai] section render failed for", name, e);
+        }
+      }
+    }
+
+    // Extra nudge for themes that listen for their own cart events rather than
+    // (or in addition to) section rendering. Harmless if none match.
     notifyThemeCartUpdated() {
       try {
         document.dispatchEvent(new CustomEvent("cart:refresh", { bubbles: true }));
         document.dispatchEvent(new CustomEvent("cart:build"));
+        document.dispatchEvent(new CustomEvent("cart-update"));
+        document.dispatchEvent(new CustomEvent("cart:updated"));
         if (window.Shopify && typeof window.Shopify.onCartUpdate === "function") {
           fetch("/cart.js").then((r) => r.json()).then((c) => window.Shopify.onCartUpdate(c)).catch(() => {});
         }
