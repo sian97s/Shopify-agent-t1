@@ -134,6 +134,21 @@ export async function runChatTurn(session, userMessage) {
   return { reply: "Sorry, that took too many steps — could you rephrase?", ...widgetData };
 }
 
+// Return a live cart ID for this session, creating a new cart if none exists
+// or if the stored one is gone. Storefront carts expire after ~10 days of
+// inactivity and become unresolvable once checkout completes — in both cases
+// getCart returns null, and reusing that stale ID is what made items "vanish."
+// Recreating transparently keeps the shopper's session working.
+async function ensureCartId(session) {
+  if (session.cartId) {
+    const existing = await getCart(session.cartId);
+    if (existing) return session.cartId;
+  }
+  const cart = await createCart();
+  session.cartId = cart.id;
+  return session.cartId;
+}
+
 async function executeTool(session, name, input, widgetData) {
   switch (name) {
     case "search_products": {
@@ -147,17 +162,19 @@ async function executeTool(session, name, input, widgetData) {
       return product ? summarizeProducts([product])[0] : null;
     }
     case "add_to_cart": {
-      if (!session.cartId) {
-        const cart = await createCart();
-        session.cartId = cart.id;
-      }
-      const cart = await addToCart(session.cartId, input.variantId, input.quantity ?? 1);
+      const cartId = await ensureCartId(session);
+      const cart = await addToCart(cartId, input.variantId, input.quantity ?? 1);
       widgetData.cart = summarizeCart(cart);
       return widgetData.cart;
     }
     case "get_cart": {
       if (!session.cartId) return null;
       const cart = await getCart(session.cartId);
+      // Cart expired/completed — clear the dead ID so the next add starts clean.
+      if (!cart) {
+        session.cartId = null;
+        return null;
+      }
       widgetData.cart = summarizeCart(cart);
       return widgetData.cart;
     }

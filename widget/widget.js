@@ -2,6 +2,7 @@
   const SCRIPT_SRC = document.currentScript ? document.currentScript.src : "";
   const API_BASE = SCRIPT_SRC ? new URL(SCRIPT_SRC).origin : "";
   const SESSION_KEY = "storefront-ai-session-id";
+  const STATE_KEY = "storefront-ai-state"; // persisted { messages, cart }
 
   if (SCRIPT_SRC) {
     const cssHref = new URL("widget.css", SCRIPT_SRC).href;
@@ -20,6 +21,25 @@
       localStorage.setItem(SESSION_KEY, id);
     }
     return id;
+  }
+
+  function loadState() {
+    try {
+      const raw = localStorage.getItem(STATE_KEY);
+      if (!raw) return { messages: null, cart: null };
+      const parsed = JSON.parse(raw);
+      return { messages: parsed.messages ?? null, cart: parsed.cart ?? null };
+    } catch {
+      return { messages: null, cart: null };
+    }
+  }
+
+  function saveState(messages, cart) {
+    try {
+      localStorage.setItem(STATE_KEY, JSON.stringify({ messages, cart }));
+    } catch {
+      // storage full / disabled — non-fatal, session store on the server still has it
+    }
   }
 
   function formatMoney(money) {
@@ -49,12 +69,40 @@
   class StorefrontAIWidget {
     constructor() {
       this.sessionId = getSessionId();
-      this.cart = null;
+      const saved = loadState();
+      this.messages = saved.messages; // null -> greeting added on first render
+      this.cart = saved.cart;
       this.open = false;
       this.sending = false;
       this.root = el("div", { class: "sfai-root" });
       document.body.appendChild(this.root);
       this.render();
+      // Reconcile with the server's copy (covers cleared local storage or a
+      // different browser that shares the same session id).
+      this.rehydrateFromServer();
+    }
+
+    persist() {
+      saveState(this.messages, this.cart);
+    }
+
+    async rehydrateFromServer() {
+      try {
+        const res = await fetch(`${API_BASE}/api/history?sessionId=${encodeURIComponent(this.sessionId)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const serverMsgs = data.messages ?? [];
+        // Prefer the server transcript when it has more than the local copy.
+        const localCount = this.messages ? this.messages.length : 0;
+        if (serverMsgs.length > localCount) {
+          this.messages = serverMsgs;
+          if (data.cart) this.cart = data.cart;
+          this.persist();
+          if (this.open) this.render();
+        }
+      } catch {
+        // offline / server down — keep the local copy, no action needed
+      }
     }
 
     render() {
@@ -142,8 +190,10 @@
     }
 
     async sendMessage(text) {
+      this.messages ??= [];
       this.messages.push({ role: "user", text });
       this.sending = true;
+      this.persist();
       this.render();
 
       try {
@@ -162,6 +212,7 @@
         this.messages.push({ role: "assistant", text: "Sorry, something went wrong. Please try again." });
       } finally {
         this.sending = false;
+        this.persist();
         this.render();
       }
     }
