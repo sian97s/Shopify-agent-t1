@@ -111,23 +111,49 @@
     // These are same-origin calls to the storefront (NOT the agent backend), so
     // the item lands in the exact cart the store's cart icon / /cart page show.
     async performCartActions(actions) {
+      let anyOk = false;
       for (const a of actions) {
         try {
           const res = await fetch("/cart/add.js", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
             body: JSON.stringify({ items: [{ id: Number(a.variantId), quantity: a.quantity ?? 1 }] }),
           });
-          if (!res.ok) throw new Error(`add.js ${res.status}`);
+          const ct = res.headers.get("content-type") || "";
+          const body = ct.includes("json") ? await res.json().catch(() => null) : null;
+          if (!res.ok) {
+            // Surface the REAL reason instead of the model's optimistic "added".
+            let reason;
+            if (res.status === 404 || !ct.includes("json")) {
+              reason =
+                "this page isn't a Shopify storefront (looks like the preview page). Cart adds only work on your live store.";
+            } else {
+              reason = (body && (body.description || body.message)) || `store returned HTTP ${res.status}`;
+            }
+            console.warn("[sfai] cart/add.js failed", res.status, body);
+            this.messages.push({ role: "assistant", text: `⚠️ That didn't actually add to the cart — ${reason}` });
+            continue;
+          }
+          anyOk = true;
         } catch (err) {
+          console.warn("[sfai] cart/add.js error", err);
           this.messages.push({
             role: "assistant",
-            text: "I couldn't add that to your cart. If you're on the preview page this is expected — it only works on the live store.",
+            text: "⚠️ That didn't actually add to the cart — the store's cart couldn't be reached from this page.",
           });
         }
       }
       await this.refreshStoreCart();
-      this.notifyThemeCartUpdated();
+      if (anyOk) {
+        this.notifyThemeCartUpdated();
+        const n = this.cart?.count ?? 0;
+        this.messages.push({
+          role: "assistant",
+          text: `✓ Confirmed in your store cart — ${n} item${n === 1 ? "" : "s"} now. Use the Checkout button below when ready.`,
+        });
+        this.persist();
+        this.render();
+      }
     }
 
     // Read the native cart (/cart.js) and mirror it in the widget's cart bar.
