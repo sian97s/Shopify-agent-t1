@@ -103,6 +103,63 @@
       } catch {
         // offline / server down — keep the local copy, no action needed
       }
+      // Always reflect the shopper's real store cart on open.
+      this.refreshStoreCart();
+    }
+
+    // Add items to the shopper's NATIVE store cart via Shopify's Ajax Cart API.
+    // These are same-origin calls to the storefront (NOT the agent backend), so
+    // the item lands in the exact cart the store's cart icon / /cart page show.
+    async performCartActions(actions) {
+      for (const a of actions) {
+        try {
+          const res = await fetch("/cart/add.js", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ items: [{ id: Number(a.variantId), quantity: a.quantity ?? 1 }] }),
+          });
+          if (!res.ok) throw new Error(`add.js ${res.status}`);
+        } catch (err) {
+          this.messages.push({
+            role: "assistant",
+            text: "I couldn't add that to your cart. If you're on the preview page this is expected — it only works on the live store.",
+          });
+        }
+      }
+      await this.refreshStoreCart();
+      this.notifyThemeCartUpdated();
+    }
+
+    // Read the native cart (/cart.js) and mirror it in the widget's cart bar.
+    async refreshStoreCart() {
+      try {
+        const res = await fetch("/cart.js", { headers: { Accept: "application/json" } });
+        if (!res.ok) return; // not on a Shopify storefront (e.g. preview page)
+        const c = await res.json();
+        this.cart = {
+          count: c.item_count,
+          total: { amount: String((c.total_price ?? 0) / 100), currencyCode: c.currency },
+          checkoutUrl: "/checkout",
+        };
+        this.persist();
+        if (this.open) this.render();
+      } catch {
+        // ignore — leave whatever cart state we had
+      }
+    }
+
+    // Nudge the theme to refresh its cart icon / drawer. Themes listen for
+    // different events, so we fire the common ones; harmless if none match.
+    notifyThemeCartUpdated() {
+      try {
+        document.dispatchEvent(new CustomEvent("cart:refresh", { bubbles: true }));
+        document.dispatchEvent(new CustomEvent("cart:build"));
+        if (window.Shopify && typeof window.Shopify.onCartUpdate === "function") {
+          fetch("/cart.js").then((r) => r.json()).then((c) => window.Shopify.onCartUpdate(c)).catch(() => {});
+        }
+      } catch {
+        // non-fatal
+      }
     }
 
     render() {
@@ -135,7 +192,7 @@
       const panel = el("div", { class: "sfai-panel" }, [
         el("div", { class: "sfai-header", text: "Steady Decker Assistant" }),
         this.messagesEl,
-        this.cart && this.cart.lines?.length ? this.renderCartBar() : null,
+        this.cart && (this.cart.count || this.cart.lines?.length) ? this.renderCartBar() : null,
         form,
       ]);
       this.root.appendChild(panel);
@@ -144,10 +201,10 @@
     }
 
     renderCartBar() {
-      const count = this.cart.lines.reduce((n, l) => n + l.quantity, 0);
+      const count = this.cart.count ?? this.cart.lines.reduce((n, l) => n + l.quantity, 0);
       return el("div", { class: "sfai-cart-bar" }, [
         el("span", { text: `${count} item${count === 1 ? "" : "s"} · ${formatMoney(this.cart.total)}` }),
-        el("a", { href: this.cart.checkoutUrl, target: "_blank", rel: "noopener", class: "sfai-checkout-btn", text: "Checkout" }),
+        el("a", { href: this.cart.checkoutUrl || "/checkout", class: "sfai-checkout-btn", text: "Checkout" }),
       ]);
     }
 
@@ -207,7 +264,7 @@
 
         if (data.reply) this.messages.push({ role: "assistant", text: data.reply });
         if (data.products?.length) this.messages.push({ role: "products", products: data.products });
-        if (data.cart) this.cart = data.cart;
+        if (data.cartActions?.length) await this.performCartActions(data.cartActions);
       } catch (err) {
         this.messages.push({ role: "assistant", text: "Sorry, something went wrong. Please try again." });
       } finally {

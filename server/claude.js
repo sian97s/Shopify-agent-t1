@@ -1,5 +1,13 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { searchProducts, getProduct, createCart, addToCart, getCart } from "./shopify.js";
+import { searchProducts, getProduct } from "./shopify.js";
+
+// Storefront API GIDs look like "gid://shopify/ProductVariant/44123456789".
+// The Ajax Cart API (/cart/add.js) needs the bare numeric id at the end.
+function numericVariantId(gid) {
+  if (typeof gid !== "string") return null;
+  const tail = gid.split("/").pop();
+  return /^\d+$/.test(tail) ? tail : null;
+}
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, fetch: globalThis.fetch });
 
@@ -8,7 +16,7 @@ const MODEL = "claude-sonnet-5";
 const SYSTEM_PROMPT = `You are the shopping assistant for Steady Decker's online store.
 Help shoppers find products, answer questions about them, and build a cart.
 Always use tools to look up real product and price data — never invent products, prices, or availability.
-When a shopper wants to buy something, add it to their cart with add_to_cart, then let them know they can check out.
+When a shopper wants to buy something, add it to their cart with add_to_cart. This adds it to their real store cart, so tell them it's in their cart and they can check out from the cart when ready.
 Keep replies short and conversational. Prices are already formatted with currency by the tools — don't reformat them.
 When you are done taking actions for this turn, give a brief natural-language reply summarizing what happened.`;
 
@@ -37,7 +45,8 @@ const TOOLS = [
   },
   {
     name: "add_to_cart",
-    description: "Add a product variant to the shopper's cart. Creates a cart if one doesn't exist yet.",
+    description:
+      "Add a product variant to the shopper's real store cart. Use the ProductVariant GID from a prior search_products/get_product result.",
     input_schema: {
       type: "object",
       properties: {
@@ -46,11 +55,6 @@ const TOOLS = [
       },
       required: ["variantId"],
     },
-  },
-  {
-    name: "get_cart",
-    description: "Get the shopper's current cart contents and checkout URL.",
-    input_schema: { type: "object", properties: {} },
   },
 ];
 
@@ -92,7 +96,9 @@ function summarizeCart(cart) {
 export async function runChatTurn(session, userMessage) {
   session.history.push({ role: "user", content: userMessage });
 
-  const widgetData = { products: null, cart: null };
+  // products: cards to render. cartActions: adds the widget performs against the
+  // shopper's native store cart (via /cart/add.js in the browser).
+  const widgetData = { products: null, cartActions: [] };
 
   for (let iteration = 0; iteration < 6; iteration++) {
     const response = await anthropic.messages.create({
@@ -134,21 +140,6 @@ export async function runChatTurn(session, userMessage) {
   return { reply: "Sorry, that took too many steps — could you rephrase?", ...widgetData };
 }
 
-// Return a live cart ID for this session, creating a new cart if none exists
-// or if the stored one is gone. Storefront carts expire after ~10 days of
-// inactivity and become unresolvable once checkout completes — in both cases
-// getCart returns null, and reusing that stale ID is what made items "vanish."
-// Recreating transparently keeps the shopper's session working.
-async function ensureCartId(session) {
-  if (session.cartId) {
-    const existing = await getCart(session.cartId);
-    if (existing) return session.cartId;
-  }
-  const cart = await createCart();
-  session.cartId = cart.id;
-  return session.cartId;
-}
-
 async function executeTool(session, name, input, widgetData) {
   switch (name) {
     case "search_products": {
@@ -162,21 +153,13 @@ async function executeTool(session, name, input, widgetData) {
       return product ? summarizeProducts([product])[0] : null;
     }
     case "add_to_cart": {
-      const cartId = await ensureCartId(session);
-      const cart = await addToCart(cartId, input.variantId, input.quantity ?? 1);
-      widgetData.cart = summarizeCart(cart);
-      return widgetData.cart;
-    }
-    case "get_cart": {
-      if (!session.cartId) return null;
-      const cart = await getCart(session.cartId);
-      // Cart expired/completed — clear the dead ID so the next add starts clean.
-      if (!cart) {
-        session.cartId = null;
-        return null;
-      }
-      widgetData.cart = summarizeCart(cart);
-      return widgetData.cart;
+      // The server can't touch the browser's cart cookie, so it emits an action
+      // the widget executes against the native cart. We just validate the id.
+      const id = numericVariantId(input.variantId);
+      if (!id) return { error: "Invalid variantId — expected a ProductVariant GID from a search result." };
+      const quantity = input.quantity ?? 1;
+      widgetData.cartActions.push({ variantId: id, quantity });
+      return { added: true, variantId: id, quantity };
     }
     default:
       throw new Error(`Unknown tool: ${name}`);
