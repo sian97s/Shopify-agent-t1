@@ -25,6 +25,8 @@ router.post("/chat", async (req, res) => {
     if (result.reply) session.widgetMessages.push({ role: "assistant", text: result.reply });
     if (result.products?.length)
       session.widgetMessages.push({ role: "products", products: result.products });
+    if (result.materialsReport)
+      session.widgetMessages.push({ role: "materials", report: result.materialsReport });
     if (result.cart) session.widgetCart = result.cart;
 
     saveSession(sessionId, session);

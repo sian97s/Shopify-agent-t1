@@ -42,6 +42,14 @@
     }
   }
 
+  // Storefront variant GIDs look like "gid://shopify/ProductVariant/44123".
+  // The Ajax Cart API needs the bare numeric id.
+  function numericVariantId(gid) {
+    if (typeof gid !== "string") return null;
+    const tail = gid.split("/").pop();
+    return /^\d+$/.test(tail) ? tail : null;
+  }
+
   function formatMoney(money) {
     if (!money) return "";
     const amount = Number(money.amount);
@@ -283,7 +291,71 @@
         for (const p of m.products) grid.appendChild(this.renderProductCard(p));
         return el("div", { class: "sfai-msg sfai-msg-assistant" }, [grid]);
       }
+      if (m.role === "materials") {
+        return el("div", { class: "sfai-msg sfai-msg-assistant" }, [this.renderMaterialsReport(m.report)]);
+      }
       return el("div", { class: `sfai-msg sfai-msg-${m.role}`, text: m.text });
+    }
+
+    // Match table for a pasted list. High-confidence lines are already in the
+    // cart (auto-added). Low-confidence lines offer alternatives to pick from;
+    // unmatched lines are flagged.
+    renderMaterialsReport(report) {
+      const c = report.counts || { high: 0, low: 0, none: 0 };
+      const summary = el("div", { class: "sfai-mat-summary", text:
+        `${report.totalLines} item${report.totalLines === 1 ? "" : "s"} · ` +
+        `${c.high} added · ${c.low} to review · ${c.none} not found` });
+
+      const rows = el("div", { class: "sfai-mat-rows" });
+      for (const line of report.lines || []) rows.appendChild(this.renderMaterialsRow(line));
+
+      return el("div", { class: "sfai-mat" }, [summary, rows]);
+    }
+
+    renderMaterialsRow(line) {
+      const qtyName = `${line.quantity}× ${line.request}`;
+      const head = el("div", { class: "sfai-mat-head" }, [
+        el("span", { class: `sfai-mat-dot sfai-mat-${line.confidence}` }),
+        el("span", { class: "sfai-mat-req", text: qtyName }),
+      ]);
+
+      const body = el("div", { class: "sfai-mat-body" });
+
+      if (line.confidence === "high" && line.match) {
+        body.appendChild(el("div", { class: "sfai-mat-note sfai-mat-ok",
+          text: `Added: ${line.match.title} · ${formatMoney(line.match.price)}` }));
+      } else if (line.confidence === "low") {
+        body.appendChild(el("div", { class: "sfai-mat-note",
+          text: "Not sure — pick the right one:" }));
+        const alts = el("div", { class: "sfai-mat-alts" });
+        for (const alt of line.alternatives || []) {
+          alts.appendChild(this.renderMatAlt(alt, line.quantity));
+        }
+        body.appendChild(alts);
+      } else {
+        body.appendChild(el("div", { class: "sfai-mat-note sfai-mat-miss",
+          text: "No match found in the catalog." }));
+      }
+
+      return el("div", { class: "sfai-mat-row" }, [head, body]);
+    }
+
+    renderMatAlt(alt, quantity) {
+      const label = `${alt.title} · ${formatMoney(alt.price)}`;
+      const btn = el("button", {
+        class: "sfai-mat-alt",
+        text: alt.availableForSale ? `+ ${label}` : `${label} (out of stock)`,
+      });
+      if (alt.availableForSale && numericVariantId(alt.variantId)) {
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          btn.textContent = `Adding ${alt.title}…`;
+          await this.performCartActions([{ variantId: numericVariantId(alt.variantId), quantity }]);
+        });
+      } else {
+        btn.disabled = true;
+      }
+      return btn;
     }
 
     renderProductCard(p) {
@@ -333,6 +405,7 @@
 
         if (data.reply) this.messages.push({ role: "assistant", text: data.reply });
         if (data.products?.length) this.messages.push({ role: "products", products: data.products });
+        if (data.materialsReport) this.messages.push({ role: "materials", report: data.materialsReport });
         if (data.cartActions?.length) await this.performCartActions(data.cartActions);
       } catch (err) {
         this.messages.push({ role: "assistant", text: "Sorry, something went wrong. Please try again." });

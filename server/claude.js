@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { searchProducts, getProduct } from "./shopify.js";
+import { processMaterialsList } from "./materials.js";
 
 // Storefront API GIDs look like "gid://shopify/ProductVariant/44123456789".
 // The Ajax Cart API (/cart/add.js) needs the bare numeric id at the end.
@@ -17,6 +18,7 @@ const SYSTEM_PROMPT = `You are the shopping assistant for Steady Decker's online
 Help shoppers find products, answer questions about them, and build a cart.
 Always use tools to look up real product and price data — never invent products, prices, or availability.
 When a shopper wants to buy something, add it to their cart with add_to_cart. This adds it to their real store cart, so tell them it's in their cart and they can check out from the cart when ready.
+When a shopper pastes a whole list, shopping list, or materials/bill-of-materials with several items (often one per line, sometimes with quantities like "2x cedar plank"), call process_materials_list with the raw pasted text — do NOT call search_products line by line. That one tool parses the list, matches every line to the closest product, and automatically adds the confident matches to the cart. After it returns, give a short summary: how many lines were auto-added, how many are uncertain (the shopper can pick from the alternatives shown), and how many weren't found. Don't re-list every item — the widget already shows the full match table.
 Keep replies short and conversational. Prices are already formatted with currency by the tools — don't reformat them.
 When you are done taking actions for this turn, give a brief natural-language reply summarizing what happened.`;
 
@@ -54,6 +56,21 @@ const TOOLS = [
         quantity: { type: "integer", description: "Quantity to add", default: 1 },
       },
       required: ["variantId"],
+    },
+  },
+  {
+    name: "process_materials_list",
+    description:
+      "Take a shopper's pasted multi-item list (shopping list / materials list / bill of materials) and match every line to the closest catalog product, adding confident matches to the cart automatically. Use this instead of calling search_products repeatedly when the shopper pastes several items at once. Pass the raw pasted text exactly as the shopper wrote it — this tool handles parsing quantities and matching.",
+    input_schema: {
+      type: "object",
+      properties: {
+        text: {
+          type: "string",
+          description: "The raw pasted list text, e.g. '2x cedar plank\\n1 box 2in deck screws\\nwood glue'",
+        },
+      },
+      required: ["text"],
     },
   },
 ];
@@ -98,7 +115,7 @@ export async function runChatTurn(session, userMessage) {
 
   // products: cards to render. cartActions: adds the widget performs against the
   // shopper's native store cart (via /cart/add.js in the browser).
-  const widgetData = { products: null, cartActions: [] };
+  const widgetData = { products: null, cartActions: [], materialsReport: null };
 
   for (let iteration = 0; iteration < 6; iteration++) {
     const response = await anthropic.messages.create({
@@ -160,6 +177,34 @@ async function executeTool(session, name, input, widgetData) {
       const quantity = input.quantity ?? 1;
       widgetData.cartActions.push({ variantId: id, quantity });
       return { added: true, variantId: id, quantity };
+    }
+    case "process_materials_list": {
+      const report = await processMaterialsList(input.text ?? "");
+      widgetData.materialsReport = report;
+
+      // Hybrid flow: auto-add the high-confidence matches to the cart. Low and
+      // unmatched lines are left for the shopper to resolve in the widget.
+      for (const line of report.lines) {
+        if (line.confidence !== "high" || !line.match?.variantId) continue;
+        const id = numericVariantId(line.match.variantId);
+        if (!id) continue;
+        widgetData.cartActions.push({ variantId: id, quantity: line.quantity });
+      }
+
+      // Return a compact view to the model (no image URLs / full alternatives)
+      // so it can summarize without bloating the context.
+      return {
+        totalLines: report.totalLines,
+        autoAdded: report.counts.high,
+        uncertain: report.counts.low,
+        notFound: report.counts.none,
+        lines: report.lines.map((l) => ({
+          request: l.request,
+          quantity: l.quantity,
+          confidence: l.confidence,
+          matched: l.match?.title ?? null,
+        })),
+      };
     }
     default:
       throw new Error(`Unknown tool: ${name}`);
