@@ -1,5 +1,5 @@
 import type { ArtworkDetail, UniverseNode, UniverseView } from '../../shared/types.js';
-import { api, hasKey, rememberedArtKey, setKeySession } from './net/api.js';
+import { api, hasKey, keySession, rememberedArtKey, setKeySession } from './net/api.js';
 import { analytics } from './analytics.js';
 import { Camera } from './universe/camera.js';
 import { Scene } from './universe/scene.js';
@@ -314,7 +314,7 @@ document.getElementById('ctl-key')?.addEventListener('click', () => {
   }
   if (hasKey()) {
     const remembered = rememberedArtKey();
-    if (!localStorage.getItem('au.keysession') && remembered) {
+    if (!keySession() && remembered) {
       void api
         .returnWithKey(remembered)
         .then(({ session }) => {
