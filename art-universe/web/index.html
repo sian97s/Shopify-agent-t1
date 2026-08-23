@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover"
+    />
+    <title>Art Universe</title>
+    <meta name="description" content="A universe of art. Explore it, add to it, anonymously." />
+    <meta name="theme-color" content="#05070f" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='9' fill='%237fd1d8'/><circle cx='16' cy='16' r='14' fill='none' stroke='%238a4fff' stroke-width='1.5'/></svg>" />
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <!-- The universe itself. Everything else appears over it, contextually. -->
+    <canvas id="universe" aria-hidden="true"></canvas>
+
+    <!--
+      Screen-reader and keyboard surface. The canvas cannot be read, so the
+      same artworks are mirrored here as a real, focusable list.
+    -->
+    <div id="a11y-universe" class="sr-surface" role="region" aria-label="The universe of art">
+      <p id="a11y-hint" class="sr-only">
+        Use the arrow keys to move through the universe, plus and minus to zoom.
+        Press Tab to reach the list of artworks currently near you.
+      </p>
+      <ul id="a11y-list" aria-label="Artworks near you"></ul>
+    </div>
+    <p id="live-region" class="sr-only" role="status" aria-live="polite"></p>
+
+    <!-- Persistent controls: search, upload, universe, my universe. Nothing else. -->
+    <nav id="controls" aria-label="Art Universe controls">
+      <button id="ctl-search" class="control" type="button" aria-label="Search the universe" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><line x1="16" y1="16" x2="21" y2="21"/></svg>
+      </button>
+      <button id="ctl-upload" class="control control-primary" type="button" aria-label="Add your art">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      </button>
+      <button id="ctl-home" class="control" type="button" aria-label="Return to the whole universe">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3"/></svg>
+      </button>
+      <button id="ctl-key" class="control" type="button" aria-label="My universe, opened with an Art Key">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="12" r="4"/><line x1="12" y1="12" x2="21" y2="12"/><line x1="18" y1="12" x2="18" y2="16"/><line x1="21" y1="12" x2="21" y2="15"/></svg>
+      </button>
+    </nav>
+
+    <!-- Search: one field, no results page. The universe is the result. -->
+    <form id="search-panel" class="panel panel-search" hidden>
+      <label class="sr-only" for="search-input">Describe what you would like to find</label>
+      <input id="search-input" type="search" autocomplete="off" spellcheck="false"
+             placeholder="something peaceful…" enterkeyhint="search" />
+      <button type="submit" class="ghost" aria-label="Search">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="5" y1="12" x2="18" y2="12"/><polyline points="13,7 18,12 13,17"/></svg>
+      </button>
+      <ul id="search-suggestions" class="suggestions" aria-label="Ways to start"></ul>
+    </form>
+
+    <!-- Selected artwork. Five interactions, nothing more. -->
+    <aside id="detail" class="panel panel-detail" hidden aria-label="Selected artwork"></aside>
+
+    <!-- Upload, Art Key, My Universe and moderation all render here. -->
+    <div id="stage" class="stage" hidden></div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
